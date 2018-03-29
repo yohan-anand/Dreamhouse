@@ -1,0 +1,22 @@
+{
+    "cmc": {
+        "enabled": false,
+        "products": [
+            
+            "None"
+            
+
+        ]
+    },
+    "continuousIntegrationType": "gitlab",
+    "continuousIntegrationURL": "https://gitlab.appirio.com",
+    "projectType": [
+        "sfdx"
+    ],
+
+    "rollbar": {
+        "enabled": 1
+    },
+    "sourceBranchToClone": "master",
+    "sourceControlType": "git"
+}

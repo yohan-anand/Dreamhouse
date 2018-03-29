@@ -1,0 +1,184 @@
+image: appirio/dx-salesforce:stable
+
+stages:
+  - test
+  - quality_scan
+  - merge_request
+  - deploy
+  - validate
+  - review
+  - refresh
+  - delete
+  - cleanup
+
+variables:
+  CACHE_DIR: ".tmpCacheDir"
+  SCRATCH_ORG_ALIAS: "reviewApp"
+
+#If there's a period before a job, that means it's disabled
+
+cleanup:
+  stage: cleanup
+  variables:
+    GIT_STRATEGY: clone
+  script:
+    - adx ci:shell --script cleanUp.sh --arguments SIT master
+  only:
+    - schedules
+
+sonarqube_scan:
+  stage: quality_scan
+  script:
+    - adx sonar:config
+    - sonar-scanner
+      -Dsonar.login=$SONAR_LOGIN
+      -Dsonar.gitlab.project_id=$CI_PROJECT_ID
+      -Dsonar.gitlab.commit_sha=$CI_COMMIT_SHA
+      -Dsonar.gitlab.ref_name=$CI_COMMIT_REF_NAME
+      -Dsonar.analysis.mode=preview
+  only:
+    - /^feature\/.*/
+  except:
+    - tags
+    - schedules
+
+sonarqube_publish:
+  stage: quality_scan
+  script:
+    - adx sonar:config
+    - sonar-scanner
+      -Dsonar.login=$SONAR_LOGIN
+      -Dsonar.projectVersion=$CI_COMMIT_TAG
+      -Dsonar.analysis.mode=publish
+  only:
+    - master
+    - SIT
+  except:
+    - tags
+    - schedules
+
+make_review_app:
+  stage: review
+  when: manual
+  script:
+    - adx ci:shell --script createOrUpdateScratchOrg.sh
+  environment:
+    name: review-apps/$CI_COMMIT_REF_NAME
+    on_stop: stop_review_app
+  cache: *sfdxConfiguration
+  only:
+    - /^feature\/.*/
+  except:
+    - tags
+    - schedules
+
+refresh_review_app:
+  stage: merge_request
+  when: manual
+  script:
+   - adx ci:shell --script refreshAccessToScratchOrg.sh
+  environment:
+    name: review-apps/$CI_COMMIT_REF_NAME
+  cache: *sfdxConfiguration
+  only:
+    - /^feature\/.*/
+  except:
+    - tags
+    - schedules
+
+stop_review_app:
+  stage: delete
+  when: manual
+  script:
+    - adx ci:shell --script deleteScratchOrg.sh
+  environment:
+    name: review-apps/$CI_COMMIT_REF_NAME
+    action: stop
+  cache: *sfdxConfiguration
+  only:
+    - /^feature\/.*/
+  except:
+    - tags
+    - schedules
+
+validate_against_SIT:
+  stage: validate
+  script:
+    - adx ci:shell --script validateOrDeployToOrgs.sh --arguments SIT checkOnly
+  artifacts: *saveErrorsAsCSV
+  only:
+    - /^feature\/.*/
+  except:
+    - schedules
+
+deploy_to_SIT:
+  stage: deploy
+  script:
+    - adx ci:shell --script validateOrDeployToOrgs.sh --arguments SIT
+  artifacts: *saveErrorsAsCSV
+  only:
+    - /^SIT/
+  except:
+    - schedules
+
+validate_against_UAT:
+  stage: validate
+  script:
+    - adx ci:shell --script validateOrDeployToOrgs.sh --arguments UAT checkOnly
+  artifacts: *saveErrorsAsCSV
+  only:
+    - /^SIT/
+  except:
+    - schedules
+
+deploy_to_uat:
+ stage: deploy
+ script:
+   - adx ci:shell --script validateOrDeployToOrgs.sh --arguments UAT
+ artifacts: *saveErrorsAsCSV
+ only:
+   - master
+ except:
+    - schedules
+
+validate_against_production:
+ stage: validate
+ script:
+   - adx ci:shell --script validateOrDeployToOrgs.sh --arguments PROD checkOnly
+ artifacts: *saveErrorsAsCSV
+ only:
+  - master
+ except:
+    - schedules
+
+deploy_to_production:
+  stage: deploy
+  when: manual
+  script:
+   - adx ci:shell --script validateOrDeployToOrgs.sh -arguments PROD
+  artifacts: *saveErrorsAsCSV
+  only:
+   - /^v[0-9.]+$/
+  except:
+   - branches
+   - schedules
+
+job:
+  script:
+  - echo For Merge Request
+  only:
+  - triggers
+
+.cacheSFDXfiles:
+  cache: &sfdxConfiguration
+    key: $CI_COMMIT_REF_SLUG
+    paths:
+    - $CACHE_DIR
+
+.saveErrorsAsCSV:
+  artifacts: &saveErrorsAsCSV
+    name: "CI_COMMIT_REF_NAME/$CI_JOB_ID"
+    paths:
+      - errorLog.csv
+    when: on_failure
+    expire_in: 1 week
